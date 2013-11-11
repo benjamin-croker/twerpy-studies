@@ -56,11 +56,13 @@ def load_raw_tweets(load_csv="tweets_sug.csv", write_csv="tweets_processed.csv",
 def load_processed_tweets(load_csv="tweets_processed.csv"):
     return pd.read_csv(load_csv)
 
+
 def eval_model(df):
     # perform k-fold validation
     kf = KFold(n=df.shape[0], n_folds=10, random_state=SEED, shuffle=True)
     acc_scores_log = np.zeros(10)
     acc_scores_rf = np.zeros(10)
+    acc_scores_comb = np.zeros(10)
 
     fold_n = 0
     
@@ -85,8 +87,9 @@ def eval_model(df):
         y_eval = np.array(list(df["tweet_group"][fold_eval_indices]))
 
         log_cl.fit(X_train, y_train)
-        preds = log_cl.predict(X_eval)
-        acc_scores_log[fold_n] = accuracy_score(y_eval, preds)
+        log_preds = log_cl.predict(X_eval)
+        log_proba = log_cl.predict_proba(X_eval)
+        acc_scores_log[fold_n] = accuracy_score(y_eval, log_preds)
 
         # use the most important words to train RF classifier
         # take the max absolute value from all one-v-all subclassifiers
@@ -97,13 +100,22 @@ def eval_model(df):
         X_eval_dense = X_eval[:, important_words_ind].todense()
 
         rf_cl.fit(X_train_dense, y_train)
-        preds = rf_cl.predict(X_eval_dense)
-        acc_scores_rf[fold_n] = accuracy_score(y_eval, preds)
+        rf_preds = rf_cl.predict(X_eval_dense)
+        rf_proba = rf_cl.predict_proba(X_eval_dense)
+        acc_scores_rf[fold_n] = accuracy_score(y_eval, rf_preds)
+
+        # combine predictions by taking the maximum probabilities from both classifiers
+        if not all(log_cl.classes_ == rf_cl.classes_):
+            print("Error: different classes for classifiers. Combined predictions incorrect")
+        comb_proba = np.maximum(log_proba, rf_proba)
+        comb_preds = [log_cl.classes_[i] for i in comb_proba.argmax(1)]
+        acc_scores_comb[fold_n] = accuracy_score(y_eval, comb_preds)
 
         fold_n += 1
 
     print("Mean Log Accuracy:{}, Std:{}".format(np.mean(acc_scores_log), np.std(acc_scores_log)))
     print("Mean RF Accuracy:{}, Std:{}".format(np.mean(acc_scores_rf), np.std(acc_scores_rf)))
+    print("Mean Combined Accuracy:{}, Std:{}".format(np.mean(acc_scores_comb), np.std(acc_scores_comb)))
 
 if __name__ == "__main__":
     #df = load_raw_tweets()
