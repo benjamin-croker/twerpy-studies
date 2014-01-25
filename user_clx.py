@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, AdaBoostClassifier
 from sklearn.metrics import accuracy_score
+from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cross_validation import KFold
 from sklearn.feature_extraction.text import TfidfVectorizer
 
@@ -57,7 +58,47 @@ def load_processed_tweets(load_csv="tweets_processed.csv"):
     return pd.read_csv(load_csv)
 
 
-def eval_model(df):
+def eval_cosine_model(df):
+    # perform k-fold validation
+    kf = KFold(n=df.shape[0], n_folds=10, random_state=SEED, shuffle=True)
+    acc_scores_cos = np.zeros(10)
+
+    fold_n = 0
+
+    for train_indices, fold_eval_indices in kf:
+        print("Evaluating fold {} of {}".format(fold_n+1, 10))
+        # take a tfidf vectorisation of the text
+        tfv = TfidfVectorizer(min_df=3, max_features=None, strip_accents='unicode',
+                              analyzer='word', token_pattern=r'\w{1,}',
+                              decode_error='ignore',
+                              ngram_range=(1, 1), use_idf=1, smooth_idf=1,
+                              sublinear_tf=1)
+
+        X_train = tfv.fit_transform(df["tweets_text"][train_indices])
+        X_eval = tfv.transform(df["tweets_text"][fold_eval_indices])
+
+        y_train = np.array(list(df["tweet_group"][train_indices]))
+        y_eval = np.array(list(df["tweet_group"][fold_eval_indices]))
+
+        # get all the possible output classes
+        classes = list(set(y_train))
+
+        # compute the cosine similarity matrix
+        C = cosine_similarity(X_eval, X_train)
+        # compute the mean similarity for each class
+        pred_similar = np.array([[np.mean(C[i, y_train==y) for y in classes]
+            for x, i in enumerate(X_eval)])
+        # pick the highest mean to decide which class
+        preds = np.max(pred_similar, 1)
+
+        acc_scores_cos[fold_n] = accuracy_score(y_eval, log_preds)
+
+        fold_n += 1
+
+    print("Mean Cosine Similarity Accuracy:{}, Std:{}".format(np.mean(acc_scores_cos), np.std(acc_scores_cos)))
+
+
+def eval_trees_model(df):
     # perform k-fold validation
     kf = KFold(n=df.shape[0], n_folds=10, random_state=SEED, shuffle=True)
     acc_scores_log = np.zeros(10)
@@ -115,7 +156,6 @@ def eval_model(df):
         # combine predictions by taking the maximum probabilities from both classifiers
         if not all(log_cl.classes_ == rf_cl.classes_):
             print("Error: different classes for classifiers. Combined predictions incorrect")
-        # comb_proba = np.maximum(et_proba, rf_proba)
         comb_proba = 0.5*rf_proba + 0.5*et_proba
         comb_preds = [log_cl.classes_[i] for i in comb_proba.argmax(1)]
         acc_scores_comb[fold_n] = accuracy_score(y_eval, comb_preds)
