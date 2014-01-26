@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import sys
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, AdaBoostClassifier
@@ -28,7 +29,7 @@ def remove_stopwords(concat_tweets):
             for tweets in concat_tweets]
 
 
-def load_raw_tweets(load_csv="tweets_sug.csv", write_csv="tweets_processed.csv",
+def process_tweets(raw_tweets='tweets_sug.csv', processed_tweets='tweets_processed.csv',
                     rm_links=True, rm_stopwords=True):
     # load the tweets from file
     tweets = pd.read_csv(load_csv)
@@ -36,29 +37,29 @@ def load_raw_tweets(load_csv="tweets_sug.csv", write_csv="tweets_processed.csv",
     # merge all the tweets from a single user
     grouped = tweets.groupby("screen_name")
     print("Formatting data")
-    d = {"screen_name": [name for (name, data) in grouped],
-         "tweets_text": [" ".join(list(data["text"])) for (name, data) in grouped],
-         "tweet_group": [list(data["tweet_group"])[0] for (name, data) in grouped]}
+    d = {'screen_name': [name for (name, data) in grouped],
+         'tweets_text': [' '.join(list(data['text'])) for (name, data) in grouped],
+         'tweet_group': [list(data['tweet_group'])[0] for (name, data) in grouped]}
 
     if rm_links:
-        d["tweets_text"] = remove_http_links(d["tweets_text"])
+        d['tweets_text'] = remove_http_links(d['tweets_text'])
 
     if rm_stopwords:
-        d["tweets_text"] = remove_stopwords(d["tweets_text"])
+        d['tweets_text'] = remove_stopwords(d['tweets_text'])
 
     df = pd.DataFrame(d)
 
     # filter out finance, since there's only 6 of them
-    df = df[df["tweet_group"] != "finance"]
+    df = df[df['tweet_group'] != 'finance']
     df.to_csv(write_csv, index=False)
     return df
 
 
-def load_processed_tweets(load_csv="tweets_processed.csv"):
-    return pd.read_csv(load_csv)
+def load_processed_tweets(processed_tweets='tweets_processed.csv'):
+    return pd.read_csv(processed_tweets)
 
 
-def eval_cosine_model(df):
+def eval_cos_model(df):
     # perform k-fold validation
     kf = KFold(n=df.shape[0], n_folds=10, random_state=SEED, shuffle=True)
     acc_scores_cos = np.zeros(10)
@@ -74,11 +75,11 @@ def eval_cosine_model(df):
                               ngram_range=(1, 1), use_idf=1, smooth_idf=1,
                               sublinear_tf=1)
 
-        X_train = tfv.fit_transform(df["tweets_text"][train_indices])
-        X_eval = tfv.transform(df["tweets_text"][fold_eval_indices])
+        X_train = tfv.fit_transform(df['tweets_text'][train_indices])
+        X_eval = tfv.transform(df['tweets_text'][fold_eval_indices])
 
-        y_train = np.array(list(df["tweet_group"][train_indices]))
-        y_eval = np.array(list(df["tweet_group"][fold_eval_indices]))
+        y_train = np.array(list(df['tweet_group'][train_indices]))
+        y_eval = np.array(list(df['tweet_group'][fold_eval_indices]))
 
         # get all the possible output classes
         classes = list(set(y_train))
@@ -86,12 +87,12 @@ def eval_cosine_model(df):
         # compute the cosine similarity matrix
         C = cosine_similarity(X_eval, X_train)
         # compute the mean similarity for each class
-        pred_similar = np.array([[np.mean(C[i, y_train==y) for y in classes]
-            for x, i in enumerate(X_eval)])
+        pred_similar = np.array([[np.mean(C[i, y_train==y]) for y in classes]
+            for i, x in enumerate(X_eval)])
         # pick the highest mean to decide which class
-        preds = np.max(pred_similar, 1)
-
-        acc_scores_cos[fold_n] = accuracy_score(y_eval, log_preds)
+        preds = [classes[i] for i in np.argmax(pred_similar, 1)]
+        
+        acc_scores_cos[fold_n] = accuracy_score(y_eval, preds)
 
         fold_n += 1
 
@@ -124,11 +125,11 @@ def eval_trees_model(df):
                               ngram_range=(1, 1), use_idf=1, smooth_idf=1,
                               sublinear_tf=1)
 
-        X_train = tfv.fit_transform(df["tweets_text"][train_indices])
-        X_eval = tfv.transform(df["tweets_text"][fold_eval_indices])
+        X_train = tfv.fit_transform(df['tweets_text'][train_indices])
+        X_eval = tfv.transform(df['tweets_text'][fold_eval_indices])
 
-        y_train = np.array(list(df["tweet_group"][train_indices]))
-        y_eval = np.array(list(df["tweet_group"][fold_eval_indices]))
+        y_train = np.array(list(df['tweet_group'][train_indices]))
+        y_eval = np.array(list(df['tweet_group'][fold_eval_indices]))
 
         log_cl.fit(X_train, y_train)
         log_preds = log_cl.predict(X_eval)
@@ -167,7 +168,14 @@ def eval_trees_model(df):
     print("Mean Extra Trees Accuracy:{}, Std:{}".format(np.mean(acc_scores_et), np.std(acc_scores_et)))
     print("Mean Combined Accuracy:{}, Std:{}".format(np.mean(acc_scores_comb), np.std(acc_scores_comb)))
 
-if __name__ == "__main__":
-    #df = load_raw_tweets()
+
+if __name__ == '__main__':
+    if 'process_tweets' in sys.argv:
+        df = process_tweets()
+    
     df = load_processed_tweets()
-    eval_model(df)
+    
+    if 'test_trees' in sys.argv:
+        eval_trees_model(df)
+    if 'test_cos' in sys.argv:
+        eval_cos_model(df)
